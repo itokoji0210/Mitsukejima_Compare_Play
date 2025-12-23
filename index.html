@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<title>mov-player postMessage 探索</title>
+<title>mov-player postMessage 探索（ワイルドカード版）</title>
 <style>
   html,body{height:100%;margin:0;background:#0b0f14;color:#e9edf3;font-family:system-ui,"Noto Sans JP",sans-serif}
   .wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr auto;gap:10px;padding:10px;box-sizing:border-box}
@@ -13,27 +13,29 @@
   #now{z-index:2;clip-path: inset(0 0 0 50%);}
   .handle{position:absolute;top:0;bottom:0;left:50%;z-index:3;pointer-events:none}
   .handle::before{content:"";position:absolute;top:0;bottom:0;left:-1px;width:2px;background:rgba(233,237,243,.65)}
-  textarea{width:100%;height:150px;background:#0f1520;color:#e9edf3;border:1px solid #263044;border-radius:12px;padding:10px;box-sizing:border-box}
+  textarea{width:100%;height:170px;background:#0f1520;color:#e9edf3;border:1px solid #263044;border-radius:12px;padding:10px;box-sizing:border-box}
   button{border:1px solid #263044;background:#0f1520;color:#e9edf3;border-radius:12px;padding:9px 12px;cursor:pointer}
   input[type="range"]{width:100%}
+  .muted{opacity:.75}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="bar">
-    <b>見附島 比較（postMessage探索）</b>
+    <b>見附島 比較（postMessage探索：ワイルドカード送信）</b>
+    <div class="muted" style="margin-top:6px">
+      目的：iframe→親 の message が来るか／どのoriginから来るかを特定。送信は targetOrigin="*"（検証用）
+    </div>
     <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
-      <button id="btnProbe">1) PROBE（手当たり次第に投げる）</button>
-      <button id="btnPlay">2) play を投げる</button>
-      <button id="btnPause">pause を投げる</button>
-      <button id="btnSeek10">seek 10s を投げる</button>
+      <button id="btnProbe">PROBE</button>
+      <button id="btnPlay">play</button>
+      <button id="btnPause">pause</button>
+      <button id="btnSeek10">seek 10s</button>
+      <button id="btnClear">ログ消去</button>
     </div>
     <div style="margin-top:8px">
-      <div style="opacity:.8">スライダー（表示だけ）</div>
+      <div class="muted">スライダー（表示のみ）</div>
       <input id="split" type="range" min="0" max="1000" value="500">
-    </div>
-    <div style="margin-top:8px;opacity:.8">
-      期待する挙動：下のログに iframe からの message が出てくる／PROBEに何か返事がある
     </div>
   </div>
 
@@ -46,18 +48,18 @@
   </div>
 
   <div class="bar">
-    <div style="margin-bottom:6px"><b>messageログ</b>（ここに出た内容が“仕様書”になります）</div>
+    <div style="margin-bottom:6px"><b>messageログ</b>（originも表示）</div>
     <textarea id="log" readonly></textarea>
   </div>
 </div>
 
 <script>
 (() => {
-  const ORIGIN = "https://mov-player.yomiuri.co.jp"; // 送信先オリジン（* ではなく明示推奨）:contentReference[oaicite:2]{index=2}
   const past = document.getElementById("past");
   const now  = document.getElementById("now");
   const logEl= document.getElementById("log");
 
+  // 画面のスライダー（表示だけ）
   const split = document.getElementById("split");
   const handle= document.getElementById("handle");
   const nowFrame = document.getElementById("now");
@@ -76,66 +78,55 @@
     logEl.scrollTop = logEl.scrollHeight;
   }
 
-  // 受信：iframe -> 親
+  // 受信：originフィルタ無しで全部拾う（仕様発見用）
   window.addEventListener("message", (ev) => {
-    // セキュリティのため origin を確認 :contentReference[oaicite:3]{index=3}
-    if (ev.origin !== ORIGIN) return;
-    log({ from: ev.origin, data: ev.data });
+    log({ RECV_origin: ev.origin, RECV_data: ev.data });
   });
 
-  // 送信：親 -> iframe
+  // 送信：検証なので targetOrigin="*" にする（本番は必ず origin を固定）:contentReference[oaicite:3]{index=3}
   function send(frame, data){
     try{
-      frame.contentWindow.postMessage(data, ORIGIN);
-      log({ to: ORIGIN, sent: data });
+      frame.contentWindow.postMessage(data, "*");
+      log({ SENT_to: "*", data });
     }catch(e){
       log("postMessage送信エラー: " + String(e));
     }
   }
 
-  // PROBE：よくある“プレイヤーAPI”っぽい名前を投げる（当たれば返事が来るはず）
   function probe(){
     const candidates = [
       "ping","hello","init","ready","getState","state","status","info",
-      {type:"ping"},
-      {type:"hello"},
-      {type:"getState"},
-      {type:"player:ping"},
-      {type:"player:getState"},
-      {event:"ping"},
-      {cmd:"ping"},
+      {type:"ping"},{type:"hello"},{type:"getState"},
+      {type:"player:ping"},{type:"player:getState"},
+      {event:"ping"},{cmd:"ping"},
     ];
     for (const c of candidates){
-      send(past, c);
-      send(now,  c);
+      send(past, c); send(now, c);
     }
   }
 
-  // “それっぽい”コマンドも投げる（実際はログに出た仕様に合わせて差し替える）
   function sendPlay(){
-    const cmds = ["play",{type:"play"},{cmd:"play"},{type:"player:play"}];
-    cmds.forEach(c => { send(past,c); send(now,c); });
+    ["play",{type:"play"},{cmd:"play"},{type:"player:play"}].forEach(c => { send(past,c); send(now,c); });
   }
   function sendPause(){
-    const cmds = ["pause",{type:"pause"},{cmd:"pause"},{type:"player:pause"}];
-    cmds.forEach(c => { send(past,c); send(now,c); });
+    ["pause",{type:"pause"},{cmd:"pause"},{type:"player:pause"}].forEach(c => { send(past,c); send(now,c); });
   }
   function sendSeek(sec){
-    const cmds = [
+    [
       {type:"seek", time:sec},
       {cmd:"seek",  time:sec},
       {type:"setCurrentTime", currentTime:sec},
       {type:"player:seek", t:sec}
-    ];
-    cmds.forEach(c => { send(past,c); send(now,c); });
+    ].forEach(c => { send(past,c); send(now,c); });
   }
 
   document.getElementById("btnProbe").onclick = probe;
   document.getElementById("btnPlay").onclick = sendPlay;
   document.getElementById("btnPause").onclick= sendPause;
   document.getElementById("btnSeek10").onclick= () => sendSeek(10);
+  document.getElementById("btnClear").onclick= () => { logEl.value=""; };
 
-  log("開始：iframeが postMessage を送ってくるか、PROBEに返事があるか確認してください。");
+  log("開始：このページは受信originを絞らず表示します。何かRECVが出るか確認してください。");
 })();
 </script>
 </body>
