@@ -3,130 +3,244 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<title>mov-player postMessage 探索（ワイルドカード版）</title>
+<title>見附島 比較（HLS同期）</title>
 <style>
-  html,body{height:100%;margin:0;background:#0b0f14;color:#e9edf3;font-family:system-ui,"Noto Sans JP",sans-serif}
-  .wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr auto;gap:10px;padding:10px;box-sizing:border-box}
-  .bar{background:rgba(18,24,38,.9);border:1px solid #263044;border-radius:14px;padding:10px}
-  .stage{position:relative;overflow:hidden;border-radius:18px;border:1px solid #263044;background:#000}
-  iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
-  #now{z-index:2;clip-path: inset(0 0 0 50%);}
-  .handle{position:absolute;top:0;bottom:0;left:50%;z-index:3;pointer-events:none}
-  .handle::before{content:"";position:absolute;top:0;bottom:0;left:-1px;width:2px;background:rgba(233,237,243,.65)}
-  textarea{width:100%;height:170px;background:#0f1520;color:#e9edf3;border:1px solid #263044;border-radius:12px;padding:10px;box-sizing:border-box}
-  button{border:1px solid #263044;background:#0f1520;color:#e9edf3;border-radius:12px;padding:9px 12px;cursor:pointer}
+  :root{
+    --bg:#0b0f14; --fg:#e9edf3; --muted:#9aa3b2;
+    --border:#263044; --accent:#4da3ff; --accent2:#ff7a4d;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.4 system-ui,"Noto Sans JP",sans-serif}
+  #wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr auto;gap:10px;padding:10px}
+  .bar{background:rgba(18,24,38,.92);border:1px solid var(--border);border-radius:14px;padding:10px}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  button{border:1px solid var(--border);background:rgba(15,21,32,.9);color:var(--fg);border-radius:12px;padding:9px 12px;cursor:pointer}
+  button.primary{border-color:rgba(77,163,255,.6)}
+  button.orange{border-color:rgba(255,122,77,.6)}
+  .muted{color:var(--muted)}
+  .stage{position:relative;overflow:hidden;border-radius:18px;border:1px solid var(--border);background:#000}
+  video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
+  #past{z-index:1}
+  #now{z-index:2}
+  .mode-slider #now{clip-path: inset(0 0 0 50%);}
+  .mode-fade #now{clip-path:none; opacity:.5;}
+  #splitHandle{position:absolute;top:0;bottom:0;left:50%;z-index:5;pointer-events:none}
+  #splitHandle::before{content:"";position:absolute;top:0;bottom:0;left:-1px;width:2px;background:rgba(233,237,243,.65)}
+  .hint{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+        z-index:6;pointer-events:none;color:rgba(233,237,243,.18);font-weight:700;letter-spacing:.08em}
   input[type="range"]{width:100%}
-  .muted{opacity:.75}
+  .grow{flex:1;min-width:240px}
+  .badge{padding:6px 10px;border:1px solid var(--border);border-radius:999px;background:rgba(0,0,0,.18)}
+  .mode-slider .seekAccent{accent-color: var(--accent);}
+  .mode-fade   .seekAccent{accent-color: var(--accent2);}
 </style>
 </head>
 <body>
-<div class="wrap">
+<div id="wrap">
   <div class="bar">
-    <b>見附島 比較（postMessage探索：ワイルドカード送信）</b>
-    <div class="muted" style="margin-top:6px">
-      目的：iframe→親 の message が来るか／どのoriginから来るかを特定。送信は targetOrigin="*"（検証用）
+    <div class="row">
+      <b>見附島 比較（同期）</b>
+      <span class="badge" id="state">準備中</span>
+      <span class="muted" id="note"></span>
     </div>
-    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
-      <button id="btnProbe">PROBE</button>
-      <button id="btnPlay">play</button>
-      <button id="btnPause">pause</button>
-      <button id="btnSeek10">seek 10s</button>
-      <button id="btnClear">ログ消去</button>
-    </div>
-    <div style="margin-top:8px">
-      <div class="muted">スライダー（表示のみ）</div>
-      <input id="split" type="range" min="0" max="1000" value="500">
+    <div class="row" style="margin-top:8px">
+      <button class="primary" id="btnPlay">▶ 再生</button>
+      <button id="btnPause">⏸ 停止</button>
+      <button class="orange" id="btnSlider">スライダー比較</button>
+      <button id="btnFade">フェード比較</button>
+      <button id="btnFull">⛶ フルスクリーン</button>
     </div>
   </div>
 
-  <div class="stage" id="stage">
-    <iframe id="past" src="https://mov-player.yomiuri.co.jp/script?key=845c383728d475af3b179283f87d197c2573ddf632f57b819877773dbec4507b&type=1"
-            allow="autoplay; fullscreen; picture-in-picture"></iframe>
-    <iframe id="now"  src="https://mov-player.yomiuri.co.jp/script?key=820ea851c575ad8655cd559922144cf1eb745395aa374a004504a6a914cb7f77&type=1"
-            allow="autoplay; fullscreen; picture-in-picture"></iframe>
-    <div class="handle" id="handle"></div>
+  <div class="stage mode-slider" id="stage">
+    <video id="past" playsinline muted preload="auto"></video>
+    <video id="now"  playsinline muted preload="auto"></video>
+    <div class="hint" id="hint">← 被災前（2023） / 被災後（2025） →</div>
+    <div id="splitHandle"></div>
   </div>
 
   <div class="bar">
-    <div style="margin-bottom:6px"><b>messageログ</b>（originも表示）</div>
-    <textarea id="log" readonly></textarea>
+    <div class="row">
+      <span class="muted">シーク</span>
+      <input class="seekAccent grow" id="seek" type="range" min="0" max="1000" value="0">
+      <span class="muted" id="time">0:00 / 0:00</span>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <span class="muted">比較</span>
+      <input class="grow" id="compare" type="range" min="0" max="1000" value="500">
+      <span class="muted" id="pct">50%</span>
+    </div>
   </div>
 </div>
 
+<!-- hls.js（CDN） -->
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+
 <script>
 (() => {
-  const past = document.getElementById("past");
-  const now  = document.getElementById("now");
-  const logEl= document.getElementById("log");
+  // 2本のm3u8（確定）
+  const M3U8_PAST = "https://d1u2smln55y7xz.cloudfront.net/26603/68884/content_26603_68884_1.m3u8"; // 2023
+  const M3U8_NOW  = "https://d1u2smln55y7xz.cloudfront.net/26604/68885/content_26604_68885_1.m3u8"; // 2025
 
-  // 画面のスライダー（表示だけ）
-  const split = document.getElementById("split");
-  const handle= document.getElementById("handle");
-  const nowFrame = document.getElementById("now");
-  function applySplit(){
-    const p = split.value/1000;
-    const leftPct = Math.round(p*100);
-    nowFrame.style.clipPath = `inset(0 0 0 ${leftPct}%)`;
-    handle.style.left = `${leftPct}%`;
+  const stage = document.getElementById("stage");
+  const vPast = document.getElementById("past");
+  const vNow  = document.getElementById("now");
+  const state = document.getElementById("state");
+  const note  = document.getElementById("note");
+  const seek  = document.getElementById("seek");
+  const compare = document.getElementById("compare");
+  const pct = document.getElementById("pct");
+  const time = document.getElementById("time");
+  const splitHandle = document.getElementById("splitHandle");
+  const hint = document.getElementById("hint");
+
+  const btnPlay = document.getElementById("btnPlay");
+  const btnPause= document.getElementById("btnPause");
+  const btnSlider = document.getElementById("btnSlider");
+  const btnFade   = document.getElementById("btnFade");
+  const btnFull   = document.getElementById("btnFull");
+
+  const clamp = (x,a,b)=>Math.max(a,Math.min(b,x));
+  const fmt = (sec)=>{
+    if(!isFinite(sec)) return "0:00";
+    sec=Math.max(0,sec);
+    const m=Math.floor(sec/60), s=Math.floor(sec%60);
+    return `${m}:${String(s).padStart(2,"0")}`;
+  };
+
+  let mode="slider";
+  let duration=0;
+  let userSeeking=false;
+
+  // 同期は past を基準に now を追従
+  const SYNC = { maxJump:0.20, nudge:0.06 };
+
+  function setMode(m){
+    mode=m;
+    stage.classList.toggle("mode-slider", m==="slider");
+    stage.classList.toggle("mode-fade", m==="fade");
+    applyCompare();
   }
-  split.addEventListener("input", applySplit);
-  applySplit();
 
-  function log(obj){
-    const line = typeof obj === "string" ? obj : JSON.stringify(obj);
-    logEl.value += line + "\n";
-    logEl.scrollTop = logEl.scrollHeight;
+  function applyCompare(){
+    const p = compare.value/1000;
+    pct.textContent = `${Math.round(p*100)}%`;
+    if(mode==="slider"){
+      const leftPct = Math.round(p*100);
+      vNow.style.opacity="1";
+      vNow.style.clipPath = `inset(0 0 0 ${leftPct}%)`;
+      splitHandle.style.left = `${leftPct}%`;
+      hint.style.display="block";
+    }else{
+      vNow.style.clipPath="none";
+      vNow.style.opacity = String(clamp(p,0,1));
+      hint.style.display="none";
+    }
   }
 
-  // 受信：originフィルタ無しで全部拾う（仕様発見用）
-  window.addEventListener("message", (ev) => {
-    log({ RECV_origin: ev.origin, RECV_data: ev.data });
+  // HLS 読み込み：Safariは canPlayType でネイティブ優先、他は hls.js（MSE）:contentReference[oaicite:1]{index=1}
+  function attachHls(video, url){
+    return new Promise((resolve, reject)=>{
+      if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        video.src = url;
+        video.addEventListener("loadedmetadata", () => resolve(null), {once:true});
+        video.addEventListener("error", (e)=> reject(e), {once:true});
+        return;
+      }
+      if (window.Hls && Hls.isSupported()) {
+        const hls = new Hls({ enableWorker:true, lowLatencyMode:false });
+        hls.loadSource(url);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => resolve(hls));
+        hls.on(Hls.Events.ERROR, (evt, data) => { if (data && data.fatal) reject(data); });
+        return;
+      }
+      reject(new Error("このブラウザではHLS再生がサポートされていません"));
+    });
+  }
+
+  function hardSync(){
+    const t = vPast.currentTime;          // currentTime は秒、変更でシーク :contentReference[oaicite:2]{index=2}
+    const dt = t - vNow.currentTime;
+    if (Math.abs(dt) > SYNC.maxJump) vNow.currentTime = t;
+    else if (Math.abs(dt) > SYNC.nudge) vNow.currentTime = vNow.currentTime + dt*0.35;
+  }
+
+  function tick(){
+    if(duration){
+      if(!userSeeking){
+        seek.value = String(Math.round((vPast.currentTime/duration)*1000));
+      }
+      time.textContent = `${fmt(vPast.currentTime)} / ${fmt(duration)}`;
+    }
+    if(!vPast.paused && !vPast.seeking && !vNow.seeking){
+      hardSync();
+    }
+    requestAnimationFrame(tick);
+  }
+
+  // UI
+  compare.addEventListener("input", applyCompare);
+
+  seek.addEventListener("pointerdown", ()=> userSeeking=true);
+  seek.addEventListener("pointerup", ()=>{
+    userSeeking=false;
+    if(duration){
+      const t = (seek.value/1000)*duration;
+      vPast.currentTime = t;
+      vNow.currentTime  = t;
+    }
+  });
+  seek.addEventListener("input", ()=>{
+    if(duration){
+      const t = (seek.value/1000)*duration;
+      vPast.currentTime = t;
+      vNow.currentTime  = t;
+    }
   });
 
-  // 送信：検証なので targetOrigin="*" にする（本番は必ず origin を固定）:contentReference[oaicite:3]{index=3}
-  function send(frame, data){
+  btnPlay.onclick = async ()=>{
     try{
-      frame.contentWindow.postMessage(data, "*");
-      log({ SENT_to: "*", data });
+      await vPast.play();
+      await vNow.play();
     }catch(e){
-      log("postMessage送信エラー: " + String(e));
+      console.warn(e);
+    }
+  };
+  btnPause.onclick = ()=>{ vPast.pause(); vNow.pause(); };
+
+  btnSlider.onclick= ()=> setMode("slider");
+  btnFade.onclick  = ()=> setMode("fade");
+
+  btnFull.onclick = async ()=>{
+    if(!document.fullscreenElement) await stage.requestFullscreen?.();
+    else await document.exitFullscreen?.();
+  };
+
+  // 再生/停止の片方ズレ防止
+  vPast.addEventListener("play", ()=> vNow.play().catch(()=>{}));
+  vPast.addEventListener("pause", ()=> vNow.pause());
+  vPast.addEventListener("seeked", hardSync);
+
+  async function init(){
+    state.textContent="読込中";
+    try{
+      await Promise.all([ attachHls(vPast, M3U8_PAST), attachHls(vNow, M3U8_NOW) ]);
+      duration = Math.min(vPast.duration||0, vNow.duration||0) || (vPast.duration||0);
+      state.textContent="準備OK";
+      note.textContent="";
+      applyCompare();
+      tick();
+    }catch(err){
+      state.textContent="エラー";
+      note.textContent = "CORS/権限/Content-Type などで失敗の可能性。DevTools Console を確認してください。";
+      console.error(err);
     }
   }
 
-  function probe(){
-    const candidates = [
-      "ping","hello","init","ready","getState","state","status","info",
-      {type:"ping"},{type:"hello"},{type:"getState"},
-      {type:"player:ping"},{type:"player:getState"},
-      {event:"ping"},{cmd:"ping"},
-    ];
-    for (const c of candidates){
-      send(past, c); send(now, c);
-    }
-  }
-
-  function sendPlay(){
-    ["play",{type:"play"},{cmd:"play"},{type:"player:play"}].forEach(c => { send(past,c); send(now,c); });
-  }
-  function sendPause(){
-    ["pause",{type:"pause"},{cmd:"pause"},{type:"player:pause"}].forEach(c => { send(past,c); send(now,c); });
-  }
-  function sendSeek(sec){
-    [
-      {type:"seek", time:sec},
-      {cmd:"seek",  time:sec},
-      {type:"setCurrentTime", currentTime:sec},
-      {type:"player:seek", t:sec}
-    ].forEach(c => { send(past,c); send(now,c); });
-  }
-
-  document.getElementById("btnProbe").onclick = probe;
-  document.getElementById("btnPlay").onclick = sendPlay;
-  document.getElementById("btnPause").onclick= sendPause;
-  document.getElementById("btnSeek10").onclick= () => sendSeek(10);
-  document.getElementById("btnClear").onclick= () => { logEl.value=""; };
-
-  log("開始：このページは受信originを絞らず表示します。何かRECVが出るか確認してください。");
+  setMode("slider");
+  init();
 })();
 </script>
 </body>
